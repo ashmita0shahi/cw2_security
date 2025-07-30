@@ -3,6 +3,12 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
 const { sendVerificationEmail } = require("../utils/emailService"); // Ensure email utility is imported
+const { 
+    logUserAuthentication, 
+    logDataAccess, 
+    logDataModification,
+    logSecurityEvent 
+} = require("../middleware/activityLogger");
 
 require("dotenv").config();
 
@@ -20,6 +26,7 @@ const registerUser = async (req, res) => {
         // Check if user already exists
         let user = await User.findOne({ email });
         if (user) {
+            await logSecurityEvent('REGISTER', null, req, `Registration attempt with existing email: ${email}`, 'MEDIUM');
             return res.status(400).json({ message: "User already exists" });
         }
 
@@ -52,9 +59,13 @@ const registerUser = async (req, res) => {
         // Send OTP email
         await sendVerificationEmail(email, otp);
 
+        // Log successful registration
+        await logUserAuthentication('REGISTER', user, req, true);
+
         res.status(200).json({ message: "OTP sent to email. Please verify." });
     } catch (err) {
         console.error("❌ Error registering user:", err); // ✅ Print error if any
+        await logSecurityEvent('REGISTER', null, req, `Registration failed: ${err.message}`, 'HIGH');
         res.status(500).json({ message: "Error registering user", error: err.message });
     }
 };
@@ -66,6 +77,7 @@ const verifyOTP = async (req, res) => {
         const user = await User.findOne({ email });
 
         if (!user || user.otp !== otp || new Date() > user.otpExpires) {
+            await logSecurityEvent('VERIFY_EMAIL', user, req, `Failed OTP verification for email: ${email}`, 'MEDIUM');
             return res.status(400).json({ message: "Invalid or expired OTP" });
         }
 
@@ -75,8 +87,12 @@ const verifyOTP = async (req, res) => {
         user.otpExpires = null;
         await user.save();
 
+        // Log successful email verification
+        await logUserAuthentication('VERIFY_EMAIL', user, req, true);
+
         res.status(200).json({ message: "Email verified. You can now log in." });
     } catch (err) {
+        await logSecurityEvent('VERIFY_EMAIL', null, req, `OTP verification error: ${err.message}`, 'HIGH');
         res.status(500).json({ message: "Error verifying OTP", error: err.message });
     }
 };
@@ -88,6 +104,7 @@ const resendOTP = async (req, res) => {
         const user = await User.findOne({ email });
 
         if (!user) {
+            await logSecurityEvent('RESEND_OTP', null, req, `OTP resend attempt for non-existent email: ${email}`, 'MEDIUM');
             return res.status(400).json({ message: "User not found" });
         }
 
@@ -100,8 +117,12 @@ const resendOTP = async (req, res) => {
         // Send new OTP email
         await sendVerificationEmail(email, otp);
 
+        // Log OTP resend
+        await logUserAuthentication('RESEND_OTP', user, req, true);
+
         res.status(200).json({ message: "New OTP sent to email." });
     } catch (err) {
+        await logSecurityEvent('RESEND_OTP', null, req, `OTP resend failed: ${err.message}`, 'HIGH');
         res.status(500).json({ message: "Error resending OTP", error: err.message });
     }
 };
@@ -130,25 +151,75 @@ const resendOTP = async (req, res) => {
 
 const loginUser = async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const { email, password, mfaToken, mfaBackupCode } = req.body;
 
         const user = await User.findOne({ email });
         if (!user || !await bcrypt.compare(password, user.password)) {
+            await logUserAuthentication('FAILED_LOGIN', user, req, false, "Invalid email or password");
             return res.status(400).json({ message: "Invalid email or password" });
         }
 
         if (!user.isVerified) {
+            await logSecurityEvent('LOGIN', user, req, `Login attempt with unverified email: ${email}`, 'MEDIUM');
             return res.status(400).json({ message: "Please verify your email first." });
+        }
+
+        // Check if MFA is enabled for this user
+        if (user.mfaEnabled && user.mfaSetupCompleted) {
+            // MFA is required
+            if (!mfaToken && !mfaBackupCode) {
+                await logSecurityEvent('LOGIN_MFA_REQUIRED', user, req, `Login requires MFA for user: ${email}`, 'LOW');
+                return res.status(200).json({
+                    message: "MFA verification required",
+                    requiresMFA: true,
+                    userId: user._id,
+                    tempToken: null // Don't provide JWT until MFA is verified
+                });
+            }
+
+            // Verify MFA token or backup code
+            const { isMFARequired, verifyMFAToken, verifyBackupCode, removeBackupCode, decryptSecret } = require("../utils/mfaUtils");
+            
+            let mfaValid = false;
+            let usedBackupCode = false;
+
+            if (mfaBackupCode) {
+                mfaValid = verifyBackupCode(mfaBackupCode, user.mfaBackupCodes);
+                if (mfaValid) {
+                    user.mfaBackupCodes = removeBackupCode(mfaBackupCode, user.mfaBackupCodes);
+                    usedBackupCode = true;
+                }
+            } else if (mfaToken) {
+                const secret = decryptSecret(user.mfaSecret);
+                mfaValid = verifyMFAToken(mfaToken, secret);
+            }
+
+            if (!mfaValid) {
+                await logUserAuthentication('FAILED_LOGIN', user, req, false, "Invalid MFA token");
+                return res.status(400).json({ message: "Invalid MFA token or backup code" });
+            }
+
+            // Update last MFA verification
+            user.lastMfaVerification = new Date();
+            if (usedBackupCode) {
+                await user.save();
+            }
         }
 
         const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "1h" });
 
+        // Log successful login
+        await logUserAuthentication('LOGIN', user, req, true);
+
         res.status(200).json({
             message: "Login successful",
             token,
-            role: user.role, // Send role in response
+            role: user.role,
+            requiresMFA: false,
+            mfaEnabled: user.mfaEnabled || false
         });
     } catch (err) {
+        await logSecurityEvent('LOGIN', null, req, `Login error: ${err.message}`, 'HIGH');
         res.status(500).json({ message: "Error logging in", error: err.message });
     }
 };
@@ -157,37 +228,63 @@ const loginUser = async (req, res) => {
 // Get All Users
 const getAllUsers = async (req, res) => {
     try {
+        await logDataAccess('VIEW_USERS', req.user, req, 'USER');
         const users = await User.find(); // Staffs can see all users
         res.json(users);
     } catch (error) {
+        await logSecurityEvent('VIEW_USERS', req.user, req, `Failed to fetch users: ${error.message}`, 'MEDIUM');
         res.status(500).json({ message: "Failed to fetch users", error: error.message });
     }
 };
 
 // Get User by ID
 const getUserById = async (req, res) => {
-    const user = await User.findById(req.params.id);
-    if (user) res.json(user);
-    else res.status(404).json({
-        message: "User not found"
-    });
+    try {
+        const user = await User.findById(req.params.id);
+        if (user) {
+            await logDataAccess('VIEW_USER', req.user, req, 'USER', req.params.id);
+            res.json(user);
+        } else {
+            await logSecurityEvent('VIEW_USER', req.user, req, `Attempted to view non-existent user: ${req.params.id}`, 'LOW');
+            res.status(404).json({ message: "User not found" });
+        }
+    } catch (error) {
+        await logSecurityEvent('VIEW_USER', req.user, req, `Error fetching user: ${error.message}`, 'MEDIUM');
+        res.status(500).json({ message: "Error fetching user", error: error.message });
+    }
 };
 
 // Delete User
 const deleteUser = async (req, res) => {
-    const user = await User.findByIdAndDelete(req.params.id);
-    if (user) res.json({ message: "User deleted successfully" });
-    else res.status(404).json({ message: "User not found" });
+    try {
+        const user = await User.findByIdAndDelete(req.params.id);
+        if (user) {
+            await logDataModification('DELETE_USER', req.user, req, 'USER', req.params.id, {
+                deletedUser: { email: user.email, fullname: user.fullname }
+            });
+            res.json({ message: "User deleted successfully" });
+        } else {
+            await logSecurityEvent('DELETE_USER', req.user, req, `Attempted to delete non-existent user: ${req.params.id}`, 'LOW');
+            res.status(404).json({ message: "User not found" });
+        }
+    } catch (error) {
+        await logSecurityEvent('DELETE_USER', req.user, req, `Error deleting user: ${error.message}`, 'HIGH');
+        res.status(500).json({ message: "Error deleting user", error: error.message });
+    }
 };
 
 const getUserProfile = async (req, res) => {
     try {
         const user = await User.findById(req.user.id);
         if (!user) {
+            await logSecurityEvent('VIEW_PROFILE', req.user, req, `Profile access for non-existent user: ${req.user.id}`, 'MEDIUM');
             return res.status(404).json({ message: "User not found" });
         }
+        
+        await logDataAccess('VIEW_PROFILE', req.user, req, 'USER', req.user.id);
         res.json(user);
     } catch (error) {
+        await logSecurityEvent('VIEW_PROFILE', req.user, req, `Error fetching profile: ${error.message}`, 'MEDIUM');
         res.status(500).json({ message: "Failed to fetch user profile", error: error.message });
     }
 };
@@ -196,14 +293,23 @@ const updateProfilePic = async (req, res) => {
     try {
         const user = await User.findById(req.user.id);
         if (!user) {
+            await logSecurityEvent('UPDATE_PROFILE_PICTURE', req.user, req, `Profile picture update for non-existent user: ${req.user.id}`, 'MEDIUM');
             return res.status(404).json({ message: "User not found" });
         }
 
+        const oldImage = user.image;
         user.image = req.file ? `/uploads/${req.file.filename}` : user.image;
         await user.save();
 
+        await logDataModification('UPDATE_PROFILE_PICTURE', req.user, req, 'USER', req.user.id, {
+            oldImage,
+            newImage: user.image,
+            fileName: req.file ? req.file.filename : null
+        });
+
         res.json(user);
     } catch (error) {
+        await logSecurityEvent('UPDATE_PROFILE_PICTURE', req.user, req, `Error updating profile picture: ${error.message}`, 'HIGH');
         res.status(500).json({ message: "Failed to update profile picture", error: error.message });
     }
 };
