@@ -18,6 +18,11 @@ const userSchema = new mongoose.Schema({
     mfaBackupCodes: [{ type: String }], // Backup codes for MFA recovery
     mfaSetupCompleted: { type: Boolean, default: false }, // Whether MFA setup is completed
     lastMfaVerification: { type: Date, default: null }, // Last successful MFA verification
+
+    // Security Fields
+    failedLoginAttempts: { type: Number, default: 0 }, // Tracks failed login attempts
+    lockoutUntil: { type: Date, default: null }, // Lockout time if account is locked
+    passwordLastUpdated: { type: Date, default: Date.now }, // Tracks last password update
 });
 
 const User = mongoose.model("User", userSchema);
