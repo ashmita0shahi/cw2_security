@@ -5,6 +5,7 @@ import Analytics from "./analytics";
 import Bookings from "./booking";
 import Rooms from "./room";
 import Users from "./user";
+import ActivityLogs from "./activitylogs";
 
 const AdminDashboard = () => {
     const [darkMode, setDarkMode] = useState(() => {
@@ -43,6 +44,7 @@ const AdminDashboard = () => {
                         <Route path="/users" element={<Users />} />
                         <Route path="/analytics" element={<Analytics />} />
                         <Route path="/bookings" element={<Bookings />} />
+                        <Route path="/activity-logs" element={<ActivityLogs />} />
                     </Routes>
                 </div>
             </div>
