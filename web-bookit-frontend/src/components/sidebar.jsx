@@ -34,6 +34,9 @@ const Sidebar = ({ darkMode, setDarkMode }) => {
                     <li className="mb-4">
                         <Link to="/admin/bookings" className="block p-2 rounded hover:bg-gray-300">Bookings</Link>
                     </li>
+                    <li className="mb-4">
+                        <Link to="/admin/activity-logs" className="block p-2 rounded hover:bg-gray-300">Activity Logs</Link>
+                    </li>
                 </ul>
                 <button onClick={() => setDarkMode(!darkMode)} className="mt-4 p-2 bg-emerald-500 text-white w-full rounded">
                     {darkMode ? "Light Mode" : "Dark Mode"}
