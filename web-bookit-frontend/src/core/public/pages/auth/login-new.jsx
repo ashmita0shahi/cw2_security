@@ -1,5 +1,5 @@
 import React from 'react';
-import LoginWithMFA from '../../../../components/LoginWithMFA.jsx';
+import LoginWithMFA from '../../../components/LoginWithMFA';
 
 const Login = () => {
     return <LoginWithMFA />;
