@@ -2,6 +2,7 @@ const express = require("express");
 const dotenv = require("dotenv");
 const connectDB = require("./config/db");
 const cors = require("cors")
+const { noSqlSanitizer } = require("./middleware/noSqlSanitizer.js");
 dotenv.config();
 connectDB();
 
@@ -11,14 +12,14 @@ app.use(express.json());
 app.use('/public', express.static('public'));
 
 const corsOptions = {
-    origin: ["http://localhost:5173"],
+    origin: ['http://localhost:5173', 'http://localhost:5174', 'https://localhost:5173', 'https://localhost:5174'],
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
-    // maxAge: 3600, // Maximum age of the preflight request cache
 };
 app.use(cors(corsOptions));
 app.use("/uploads", express.static("public/uploads"));
+app.use(noSqlSanitizer);
 // Routes
 const userRoutes = require("./routes/UserRoute")
 app.use("/api/users", userRoutes);
