@@ -9,6 +9,7 @@ const {
     logDataModification,
     logSecurityEvent 
 } = require("../middleware/activityLogger");
+const mime = require("mime-types");
 
 require("dotenv").config();
 
@@ -40,6 +41,17 @@ const registerUser = async (req, res) => {
         // Handle image upload (optional)
         let imagePath = req.file ? `/uploads/${req.file.filename}` : null;
         console.log("🖼 Image Path:", imagePath); // ✅ Print Image Path
+
+        // Validate uploaded image file type (if any)
+        if (req.file) {
+            const allowedTypes = ["image/jpeg", "image/png", "image/jpg"];
+            const mimeType = mime.lookup(req.file.originalname);
+            if (!allowedTypes.includes(mimeType)) {
+                return res.status(400).json({
+                    message: "Invalid file type. Only JPG, JPEG, and PNG are allowed."
+                });
+            }
+        }
 
         // Create new user
         user = new User({
@@ -154,7 +166,33 @@ const loginUser = async (req, res) => {
         const { email, password, mfaToken, mfaBackupCode } = req.body;
 
         const user = await User.findOne({ email });
-        if (!user || !await bcrypt.compare(password, user.password)) {
+        // If user not found, return error (no increment)
+        if (!user) {
+            await logUserAuthentication('FAILED_LOGIN', null, req, false, "Invalid email or password");
+            return res.status(400).json({ message: "Invalid email or password" });
+        }
+
+        // Check if the user is locked out
+        if (user.lockoutUntil && user.lockoutUntil > new Date()) {
+            return res.status(403).json({
+                message: `Account is locked. Try again after ${user.lockoutUntil}`
+            });
+        }
+
+        // Check password
+        const passwordValid = await bcrypt.compare(password, user.password);
+        if (!passwordValid) {
+            user.failedLoginAttempts += 1;
+            // Lock account if 5 or more failed attempts
+            if (user.failedLoginAttempts >= 5) {
+                user.lockoutUntil = new Date(Date.now() + 15 * 60 * 1000); // Lock for 15 minutes
+                await user.save();
+                await logUserAuthentication('FAILED_LOGIN', user, req, false, "Account locked due to multiple failed login attempts.");
+                return res.status(403).json({
+                    message: "Account locked due to multiple failed login attempts. Try again later."
+                });
+            }
+            await user.save();
             await logUserAuthentication('FAILED_LOGIN', user, req, false, "Invalid email or password");
             return res.status(400).json({ message: "Invalid email or password" });
         }
@@ -163,6 +201,22 @@ const loginUser = async (req, res) => {
             await logSecurityEvent('LOGIN', user, req, `Login attempt with unverified email: ${email}`, 'MEDIUM');
             return res.status(400).json({ message: "Please verify your email first." });
         }
+
+        // Check if the password has expired (90 days)
+        const passwordExpiryDays = 90;
+        const passwordExpiryDate = new Date(user.passwordLastUpdated);
+        passwordExpiryDate.setDate(passwordExpiryDate.getDate() + passwordExpiryDays);
+
+        if (new Date() > passwordExpiryDate) {
+            return res.status(403).json({
+                message: "Your password has expired. Please reset your password."
+            });
+        }
+
+        // Reset failed login attempts and lockout on successful login
+        user.failedLoginAttempts = 0;
+        user.lockoutUntil = null;
+        await user.save();
 
         // Check if MFA is enabled for this user
         if (user.mfaEnabled && user.mfaSetupCompleted) {
