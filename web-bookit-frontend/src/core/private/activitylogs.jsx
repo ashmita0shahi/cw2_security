@@ -14,6 +14,7 @@ import {
     RefreshCw,
     X
 } from "lucide-react";
+import { sanitizeInput } from "../../utils/sanitize";
 
 const ActivityLogs = () => {
     const [logs, setLogs] = useState([]);
@@ -236,7 +237,11 @@ const ActivityLogs = () => {
 
     // Handle filter changes
     const handleFilterChange = (key, value) => {
-        setFilters(prev => ({ ...prev, [key]: value }));
+        // Sanitize string inputs, but not numbers, dates, or boolean values
+        const sanitizedValue = (typeof value === 'string' && !['startDate', 'endDate'].includes(key)) 
+            ? sanitizeInput(value) 
+            : value;
+        setFilters(prev => ({ ...prev, [key]: sanitizedValue }));
     };
 
     // Apply filters

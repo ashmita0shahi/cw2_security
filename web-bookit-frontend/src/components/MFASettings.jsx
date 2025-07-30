@@ -13,6 +13,7 @@ import {
     RefreshCw,
     Smartphone
 } from 'lucide-react';
+import { sanitizeInput, createSanitizedHandler } from '../utils/sanitize';
 
 const MFASettings = () => {
     const [mfaStatus, setMfaStatus] = useState({
@@ -345,7 +346,10 @@ const MFASettings = () => {
                                     <input
                                         type="text"
                                         value={verificationToken}
-                                        onChange={(e) => setVerificationToken(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                                        onChange={(e) => {
+                                            const sanitizedValue = sanitizeInput(e.target.value.replace(/\D/g, '').slice(0, 6));
+                                            setVerificationToken(sanitizedValue);
+                                        }}
                                         placeholder="123456"
                                         className="w-full p-3 border border-gray-300 rounded text-center text-lg font-mono"
                                         maxLength="6"
@@ -439,7 +443,7 @@ const MFASettings = () => {
                             <input
                                 type="password"
                                 value={password}
-                                onChange={(e) => setPassword(e.target.value)}
+                                onChange={createSanitizedHandler(setPassword)}
                                 placeholder="Enter your password"
                                 className="w-full p-3 border border-gray-300 rounded mb-4"
                                 onKeyPress={(e) => e.key === 'Enter' && handlePasswordAction()}

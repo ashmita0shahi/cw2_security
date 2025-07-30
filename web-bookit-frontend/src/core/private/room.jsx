@@ -2,6 +2,7 @@ import axios from "axios";
 import { useEffect, useState } from "react";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
+import { sanitizeInput, sanitizeFormData } from "../../utils/sanitize";
 
 const Rooms = () => {
     const [rooms, setRooms] = useState([]);
@@ -60,7 +61,8 @@ const Rooms = () => {
     // Handle Form Inputs
     const handleInputChange = (e) => {
         const { name, value } = e.target;
-        setNewRoom((prev) => ({ ...prev, [name]: value }));
+        const sanitizedValue = sanitizeInput(value);
+        setNewRoom((prev) => ({ ...prev, [name]: sanitizedValue }));
     };
 
     // Handle File Upload

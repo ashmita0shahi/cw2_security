@@ -4,6 +4,8 @@ import { useForm } from "react-hook-form";
 import { Link, useNavigate } from "react-router-dom";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
+import PasswordStrengthMeter from "../../../../components/PasswordStrengthMeter.jsx";
+import { sanitizeInput, sanitizeFormData, createSanitizedHandler } from "../../../../utils/sanitize.js";
 
 const Register = () => {
     const { register, handleSubmit, reset } = useForm();
@@ -11,12 +13,19 @@ const Register = () => {
     const [email, setEmail] = useState("");
     const [otp, setOtp] = useState("");
     const [profileImage, setProfileImage] = useState(null);
+    const [password, setPassword] = useState("");
+    const [passwordError, setPasswordError] = useState("");
     const navigate = useNavigate();
 
     // Handle Image Upload
     const handleImageChange = (e) => {
         const file = e.target.files[0];
         if (file) {
+            const allowedTypes = ["image/png", "image/jpeg", "image/jpg"];
+            if (!allowedTypes.includes(file.type)) {
+                toast.error("Invalid file type. Please upload a PNG, JPEG, or JPG image.");
+                return;
+            }
             setProfileImage(URL.createObjectURL(file));
         }
     };
@@ -24,12 +33,15 @@ const Register = () => {
     // Handle Registration
     const onSubmit = async (data) => {
         try {
+            // Sanitize form data before sending
+            const sanitizedData = sanitizeFormData(data, ['image']); // Exclude image from sanitization
+            
             const formData = new FormData();
-            formData.append("fullname", data.fullname);
-            formData.append("address", data.address);
-            formData.append("phone", data.phone);
-            formData.append("email", data.email);
-            formData.append("password", data.password);
+            formData.append("fullname", sanitizedData.fullname);
+            formData.append("address", sanitizedData.address);
+            formData.append("phone", sanitizedData.phone);
+            formData.append("email", sanitizedData.email);
+            formData.append("password", sanitizedData.password);
             if (data.image[0]) {
                 formData.append("image", data.image[0]);
             }
@@ -149,13 +161,35 @@ const Register = () => {
                                 placeholder="Enter your password"
                                 className="w-full px-4 py-2 border border-gray-300 bg-white rounded-lg focus:ring-2 focus:ring-blue-400 outline-none"
                                 {...register("password", { required: true })}
+                                value={password}
+                                onChange={e => {
+                                    const sanitizedValue = sanitizeInput(e.target.value);
+                                    setPassword(sanitizedValue);
+                                    setPasswordError("");
+                                }}
                             />
+                            <PasswordStrengthMeter password={password} />
+                            {passwordError && <p className="text-red-500 text-xs mt-1">{passwordError}</p>}
                         </div>
 
                         {/* Register Button */}
                         <button
                             type="submit"
                             className="w-full py-2 text-white bg-emerald-500 hover:bg-emerald-600 rounded-lg transition duration-200 shadow-md font-semibold"
+                            onClick={e => {
+                                // Password requirements
+                                const reqs = [
+                                    password.length >= 10,
+                                    /[A-Z]/.test(password),
+                                    /[a-z]/.test(password),
+                                    /[0-9]/.test(password),
+                                    /[^A-Za-z0-9]/.test(password)
+                                ];
+                                if (!reqs.every(Boolean)) {
+                                    e.preventDefault();
+                                    setPasswordError("Password must be at least 10 characters and include uppercase, lowercase, number, and special character.");
+                                }
+                            }}
                         >
                             Register
                         </button>
@@ -176,7 +210,7 @@ const Register = () => {
                             placeholder="Enter OTP"
                             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 outline-none"
                             value={otp}
-                            onChange={(e) => setOtp(e.target.value)}
+                            onChange={(e) => setOtp(sanitizeInput(e.target.value))}
                         />
                         <button
                             className="mt-4 w-full py-2 text-white bg-green-500 hover:bg-green-600 rounded-lg transition duration-200 shadow-md font-semibold"
